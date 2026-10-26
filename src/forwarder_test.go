@@ -234,6 +234,57 @@ func TestForwarder_LocalTrackingRequiresState(t *testing.T) {
 	}
 }
 
+func localTrackingForwarder(t *testing.T) (*Forwarder, *StateStore) {
+	t.Helper()
+	store, _ := openTestStore(t)
+	source := SourceConfig{
+		Name:          "Test",
+		Host:          "imap.test.com",
+		Port:          993,
+		Secure:        boolPtr(true),
+		Auth:          Auth{User: "u", Pass: "p"},
+		Folders:       []string{"INBOX"},
+		LocalTracking: true,
+		TrackingID:    "test",
+	}
+	return NewForwarder(source, &mockSender{}, store, nil), store
+}
+
+func TestForwarder_PendingUIDs_SkipsRecordedAndSent(t *testing.T) {
+	fwd, store := localTrackingForwarder(t)
+	if err := store.MarkForwarded("test", "INBOX", 1); err != nil {
+		t.Fatal(err)
+	}
+	fwd.rememberSent("INBOX", 2)
+
+	got, err := fwd.pendingUIDs("INBOX", []imap.UID{1, 2, 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []imap.UID{3}; !reflect.DeepEqual(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
+func TestForwarder_RecordForwarded_StoreFailureIsRememberedAndReported(t *testing.T) {
+	fwd, store := localTrackingForwarder(t)
+	if err := store.Close(); err != nil { // makes every write fail
+		t.Fatal(err)
+	}
+
+	fwd.recordForwarded("INBOX", 7)
+
+	if fwd.GetStatus().Error == "" {
+		t.Error("expected a record failure to be reported in the status")
+	}
+	if !fwd.wasSent("INBOX", 7) {
+		t.Error("UID must be remembered in memory even when the store write fails")
+	}
+	if fwd.wasSent("Other", 7) {
+		t.Error("in-memory record must be per folder")
+	}
+}
+
 type mockSender struct {
 	sent   [][]byte
 	closed bool

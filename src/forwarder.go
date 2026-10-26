@@ -62,6 +62,10 @@ type Forwarder struct {
 	state  *StateStore // nil unless the source uses local tracking
 	logger *Logger
 
+	// UIDs forwarded by this process per folder (local tracking backstop).
+	sentMu sync.Mutex
+	sent   map[string]map[imap.UID]struct{}
+
 	mu        sync.Mutex
 	connected bool
 	lastSync  string
@@ -398,6 +402,54 @@ func searchCriteria(localTracking bool) *imap.SearchCriteria {
 	}
 }
 
+// pendingUIDs drops UIDs already recorded in the state store or forwarded by
+// this process (see recordForwarded).
+func (f *Forwarder) pendingUIDs(folder string, uids []imap.UID) ([]imap.UID, error) {
+	pending, err := f.state.FilterUnforwarded(f.source.TrackingID, folder, uids)
+	if err != nil {
+		return nil, err
+	}
+	n := 0
+	for _, uid := range pending {
+		if !f.wasSent(folder, uid) {
+			pending[n] = uid
+			n++
+		}
+	}
+	return pending[:n], nil
+}
+
+// recordForwarded remembers a forwarded UID. It is kept in memory first so
+// that a failing state store cannot make the same message be forwarded again
+// on every check; the failure is logged and surfaced in the status instead.
+func (f *Forwarder) recordForwarded(folder string, uid imap.UID) {
+	f.rememberSent(folder, uid)
+	if err := f.state.MarkForwarded(f.source.TrackingID, folder, uid); err != nil {
+		f.logger.Error("Message UID %d: failed to record forwarded state (it may be forwarded again after a restart): %v", uid, err)
+		f.setError(fmt.Sprintf("state store write failed: %v", err))
+		f.notifyStatus()
+	}
+}
+
+func (f *Forwarder) rememberSent(folder string, uid imap.UID) {
+	f.sentMu.Lock()
+	defer f.sentMu.Unlock()
+	if f.sent == nil {
+		f.sent = make(map[string]map[imap.UID]struct{})
+	}
+	if f.sent[folder] == nil {
+		f.sent[folder] = make(map[imap.UID]struct{})
+	}
+	f.sent[folder][uid] = struct{}{}
+}
+
+func (f *Forwarder) wasSent(folder string, uid imap.UID) bool {
+	f.sentMu.Lock()
+	defer f.sentMu.Unlock()
+	_, ok := f.sent[folder][uid]
+	return ok
+}
+
 func (f *Forwarder) forwardNewMessages(ctx context.Context, client *imapclient.Client, folder string) error {
 	searchData, err := client.UIDSearch(searchCriteria(f.source.LocalTracking), nil).Wait()
 	if err != nil {
@@ -406,7 +458,7 @@ func (f *Forwarder) forwardNewMessages(ctx context.Context, client *imapclient.C
 
 	uids := searchData.AllUIDs()
 	if f.source.LocalTracking {
-		uids, err = f.state.FilterUnforwarded(f.source.TrackingID, folder, uids)
+		uids, err = f.pendingUIDs(folder, uids)
 		if err != nil {
 			return fmt.Errorf("filter forwarded: %w", err)
 		}
@@ -473,9 +525,7 @@ func (f *Forwarder) forwardMessage(ctx context.Context, client *imapclient.Clien
 
 	if f.source.LocalTracking {
 		// Remember locally; the source mailbox is left untouched.
-		if err := f.state.MarkForwarded(f.source.TrackingID, folder, uid); err != nil {
-			f.logger.Error("Message UID %d: failed to record forwarded state (may be forwarded again): %v", uid, err)
-		}
+		f.recordForwarded(folder, uid)
 	} else {
 		// Mark as forwarded on source
 		storeCmd := client.Store(uidSet, &imap.StoreFlags{

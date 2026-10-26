@@ -96,6 +96,9 @@ Create a `config.json` file. You can use the [online configuration generator](ht
 | `sources[].folders` | string[] | no | `["INBOX"]` | Folders to monitor |
 | `sources[].deleteAfterForward` | boolean | no | `false` | Delete messages after forwarding |
 | `sources[].targetFolder` | string | no | — | Target mailbox for this source. Falls back to `target.folder`. Auto-created if it doesn't exist |
+| `sources[].localTracking` | boolean | no | `false` | Remember forwarded messages in a local state file instead of the `$Forwarded` IMAP flag. Cannot be combined with `deleteAfterForward`. See [Tracking forwarded messages](#tracking-forwarded-messages) |
+| `sources[].trackingId` | string | with `localTracking` | — | Stable, unique identifier of this source in the state file. Ignored unless `localTracking` is `true` |
+| `statePath` | string | no | `state.db` next to the config file | State file location (used only when some source has `localTracking`). Relative paths are resolved against the config file's directory |
 | `healthCheck.port` | number | no | `8080` | HTTP health check server port |
 
 > [!TIP]
@@ -185,6 +188,39 @@ Add the output to your `config.json`. No `target.host`, `target.port`, or `targe
 
 </details>
 
+### Tracking forwarded messages
+
+By default, imapforward marks every forwarded message on the source server with the `$Forwarded` IMAP flag and skips flagged messages afterwards. Some servers accept this flag but forget it when the connection closes (for example `poczta.onet.pl`). On such a server every restart forwards all unread messages again.
+
+For those sources, enable local tracking:
+
+```json
+{
+  "statePath": "/data/state.db",
+  "sources": [
+    {
+      "name": "Onet",
+      "host": "imap.poczta.onet.pl",
+      "port": 993,
+      "auth": { "user": "user@poczta.onet.pl", "pass": "password" },
+      "localTracking": true,
+      "trackingId": "onet"
+    }
+  ]
+}
+```
+
+- The UID of each forwarded message is stored in a small embedded database (`statePath`) right after it is sent. The source mailbox is not modified.
+- `trackingId` is required and must be unique across sources with `localTracking`. It identifies the source in the state file, so do not change it after the first run.
+- `localTracking` cannot be combined with `deleteAfterForward`.
+- On the first run the state file is empty, so **all unread messages in the monitored folders are forwarded**. Later runs forward only new ones. Stopping and restarting is safe at any point.
+- Messages you read in your mailbox before they are forwarded are skipped, as with the flag method.
+- If the server changes a folder's `UIDVALIDITY`, the remembered UIDs for that folder are discarded (a warning is logged) and unread messages are forwarded again.
+- If the process stops after a message is sent but before it is recorded, that single message may be forwarded again.
+- Switching an existing source to `localTracking` (or changing its `trackingId`) starts from an empty state.
+
+With Docker, keep the state file on a volume (see [Docker](#docker)).
+
 ## Usage
 
 ### CLI
@@ -227,8 +263,11 @@ imapforward -config /path/to/config.json
 docker run -d \
   --name imapforward \
   -v $(pwd)/config.json:/app/config.json:ro \
+  -v imapforward-data:/data \
   ghcr.io/sinedied/imapforward:latest
 ```
+
+The `/data` volume is only needed for sources with `localTracking`; set `"statePath": "/data/state.db"` in your config. The container runs as uid 1001, so a bind mount instead of a named volume must be writable by that user.
 
 ### Docker Compose
 
@@ -239,6 +278,10 @@ services:
     restart: unless-stopped
     volumes:
       - ./config.json:/app/config.json:ro
+      - imapforward-data:/data
+
+volumes:
+  imapforward-data:
 ```
 
 ### Health Check
@@ -280,11 +323,11 @@ Status values: `ok` (all connected), `degraded` (some connected), `error` (none 
 ## How It Works
 
 1. Connects to each configured IMAP source account (one connection per folder)
-2. Scans for unseen messages that haven't been forwarded yet
+2. Scans for unseen messages that haven't been forwarded yet (`NOT SEEN`, minus those already flagged or recorded locally)
 3. Forwards each message to the target using the configured method:
    - **IMAP**: Appends raw RFC822 to the target mailbox, preserving all original headers
    - **SMTP**: Sends via SMTP with Reply-To injection for reply/reply-all support
    - **Gmail API**: Imports via Gmail API with spam filtering and full header preservation
-4. Marks forwarded messages with a `$Forwarded` IMAP flag
+4. Remembers forwarded messages: by default with a `$Forwarded` IMAP flag on the source, or in a local state file for sources with `localTracking`
 5. Enters IMAP IDLE mode to watch for new messages in real-time, or falls back to polling when the server doesn't support IDLE
 6. Automatically reconnects with exponential backoff on connection loss

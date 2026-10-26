@@ -11,10 +11,14 @@ RUN CGO_ENABLED=0 go build -ldflags="-s -w -X main.version=${APP_VERSION}" -o /a
 FROM alpine:3
 RUN apk add --no-cache ca-certificates && \
     addgroup -g 1001 -S appgroup && \
-    adduser -S appuser -u 1001 -G appgroup
+    adduser -S appuser -u 1001 -G appgroup && \
+    mkdir /data && chown appuser:appgroup /data
 WORKDIR /app
 COPY --from=build /app/imapforward .
 USER appuser
+
+# Writable location for the local tracking state file (see "statePath")
+VOLUME /data
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD wget -q -O /dev/null http://localhost:8080/health || exit 1

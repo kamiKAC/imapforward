@@ -212,10 +212,36 @@ const IMPLICIT_TLS_PORTS = new Set([465, 993]);
                             <span>Delete after forward</span>
                           </label>
                         </div>
+                        <div class="field field-xs">
+                          <label class="toggle-label">
+                            <input type="checkbox" formControlName="localTracking" />
+                            <span>Track forwarded locally</span>
+                          </label>
+                          <span class="hint">For servers that forget the $Forwarded flag. Not combinable with delete</span>
+                        </div>
                       </div>
+                      @if (source.get('localTracking')?.value) {
+                        <div class="form-row">
+                          <div class="field">
+                            <label [for]="'s-trackingId-' + i">Tracking ID</label>
+                            <input [id]="'s-trackingId-' + i" formControlName="trackingId"
+                              placeholder="work" />
+                            <span class="hint">Unique per source, do not change after the first run</span>
+                          </div>
+                        </div>
+                      }
                     </div>
                   }
                 </div>
+                @if (usesLocalTracking) {
+                  <div class="form-row">
+                    <div class="field">
+                      <label for="statePath">State file path</label>
+                      <input id="statePath" formControlName="statePath" placeholder="/data/state.db" />
+                      <span class="hint">Where forwarded messages are remembered. With Docker, put it on a mounted volume (e.g. /data)</span>
+                    </div>
+                  </div>
+                }
                 <button type="button" class="btn-add" (click)="addSource()">+ Add Source Account</button>
               </fieldset>
 
@@ -657,6 +683,7 @@ export class ConfigTool {
         refreshToken: [''],
       }),
     }),
+    statePath: ['/data/state.db'],
     sources: this.fb.array([this.createSource()]),
   });
 
@@ -730,6 +757,9 @@ export class ConfigTool {
         : {}),
     };
 
+    const anyLocalTracking = (v.sources ?? []).some((s) => s?.localTracking);
+    const statePath = (v.statePath || '').trim();
+
     const gmailApi = (v.target as Record<string, unknown>)?.['gmailApi'] as Record<string, string> | undefined;
     const config: Record<string, unknown> = {
       target,
@@ -755,8 +785,10 @@ export class ConfigTool {
           folders: this.parseFolders(s?.folders as string),
           deleteAfterForward: s?.deleteAfterForward ?? false,
           ...(tf ? {targetFolder: tf} : {}),
+          ...(s?.localTracking ? {localTracking: true, trackingId: s.trackingId || ''} : {}),
         };
       }),
+      ...(anyLocalTracking && statePath ? {statePath} : {}),
     };
 
     return JSON.stringify(config, null, 2);
@@ -770,8 +802,12 @@ export class ConfigTool {
     return this.form.get('target')!;
   }
 
+  protected get usesLocalTracking(): boolean {
+    return this.sources.controls.some((c) => !!c.get('localTracking')?.value);
+  }
+
   protected createSource(): FormGroup {
-    return this.fb.group({
+    const group = this.fb.group({
       name: ['', Validators.required],
       host: ['', Validators.required],
       port: [993, Validators.required],
@@ -783,7 +819,32 @@ export class ConfigTool {
       folders: ['INBOX'],
       deleteAfterForward: [false],
       targetFolder: [''],
+      localTracking: [false],
+      trackingId: [''],
     });
+
+    // Local tracking and delete-after-forward are mutually exclusive.
+    const deleteAfter = group.get('deleteAfterForward')!;
+    const localTracking = group.get('localTracking')!;
+    const trackingId = group.get('trackingId')!;
+    localTracking.valueChanges.subscribe((on) => {
+      if (on) {
+        deleteAfter.disable({emitEvent: false});
+        trackingId.setValidators(Validators.required);
+      } else {
+        deleteAfter.enable({emitEvent: false});
+        trackingId.clearValidators();
+      }
+      trackingId.updateValueAndValidity();
+    });
+    deleteAfter.valueChanges.subscribe((on) => {
+      if (on) {
+        localTracking.disable({emitEvent: false});
+      } else {
+        localTracking.enable({emitEvent: false});
+      }
+    });
+    return group;
   }
 
   protected addSource(): void {

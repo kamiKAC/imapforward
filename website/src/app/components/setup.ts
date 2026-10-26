@@ -44,8 +44,10 @@ import {ScrollAnimate} from '../directives/scroll-animate';
               <div class="code-block">
                 <pre><code>docker run -d --name imapforward \\
   -v ./config.json:/app/config.json:ro \\
+  -v imapforward-data:/data \\
   ghcr.io/sinedied/imapforward:latest</code></pre>
               </div>
+              <p>The <code>/data</code> volume is only needed for sources with local tracking (see below).</p>
             </div>
           </div>
         </div>
@@ -84,8 +86,24 @@ import {ScrollAnimate} from '../directives/scroll-animate';
     image: ghcr.io/sinedied/imapforward:latest
     restart: unless-stopped
     volumes:
-      - ./config.json:/app/config.json:ro</code></pre>
+      - ./config.json:/app/config.json:ro
+      - imapforward-data:/data
+
+volumes:
+  imapforward-data:</code></pre>
             </div>
+          </div>
+
+          <div class="detail-card" appScrollAnimate>
+            <h3>Local Tracking</h3>
+            <p>
+              Some servers (e.g. <code>poczta.onet.pl</code>) accept the <code>$Forwarded</code> flag but forget it
+              when the connection closes, so every restart forwards all unread mail again. Set
+              <code>"localTracking": true</code> and a unique <code>"trackingId"</code> on such a source to remember
+              forwarded messages in a state file instead (<code>"statePath"</code>, e.g. <code>/data/state.db</code>
+              with Docker). The mailbox itself is not modified. It cannot be combined with
+              <code>deleteAfterForward</code>, and the first run forwards all unread messages.
+            </p>
           </div>
 
           <div class="detail-card" appScrollAnimate>

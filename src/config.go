@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 )
 
 // Auth holds IMAP/SMTP authentication credentials.
@@ -22,6 +23,8 @@ type SourceConfig struct {
 	Folders            []string `json:"folders,omitempty"`
 	DeleteAfterForward bool     `json:"deleteAfterForward,omitempty"`
 	TargetFolder       string   `json:"targetFolder,omitempty"`
+	LocalTracking      bool     `json:"localTracking,omitempty"`
+	TrackingID         string   `json:"trackingId,omitempty"`
 }
 
 // TargetConfig is the configuration for the target server (IMAP or SMTP).
@@ -52,9 +55,24 @@ type Config struct {
 	GmailAPI      *GmailAPIConfig   `json:"gmailApi,omitempty"`
 	Sources       []SourceConfig    `json:"sources"`
 	HealthCheck   HealthCheckConfig `json:"healthCheck,omitempty"`
+	StatePath     string            `json:"statePath,omitempty"`
 }
 
-const defaultHealthCheckPort = 8080
+const (
+	defaultHealthCheckPort = 8080
+	defaultStateFile       = "state.db"
+)
+
+// usesLocalTracking reports whether any source remembers forwarded messages
+// in the local state database instead of the $Forwarded IMAP flag.
+func (c *Config) usesLocalTracking() bool {
+	for i := range c.Sources {
+		if c.Sources[i].LocalTracking {
+			return true
+		}
+	}
+	return false
+}
 
 func isImplicitTLS(port int) bool {
 	return port == 465 || port == 993
@@ -119,6 +137,7 @@ func validateConfig(c *Config) error {
 	if len(c.Sources) == 0 {
 		return fmt.Errorf("sources must be a non-empty array")
 	}
+	trackingIDs := make(map[string]int)
 	for i := range c.Sources {
 		s := &c.Sources[i]
 		if s.Name == "" {
@@ -141,6 +160,18 @@ func validateConfig(c *Config) error {
 		}
 		if len(s.Folders) == 0 {
 			s.Folders = []string{"INBOX"}
+		}
+		if s.LocalTracking {
+			if s.DeleteAfterForward {
+				return fmt.Errorf("sources[%d].localTracking cannot be combined with deleteAfterForward", i)
+			}
+			if s.TrackingID == "" {
+				return fmt.Errorf("sources[%d].trackingId must be a non-empty string when localTracking is enabled", i)
+			}
+			if prev, ok := trackingIDs[s.TrackingID]; ok {
+				return fmt.Errorf("sources[%d].trackingId %q is already used by sources[%d]", i, s.TrackingID, prev)
+			}
+			trackingIDs[s.TrackingID] = i
 		}
 	}
 
@@ -168,6 +199,15 @@ func loadConfig(path string) (*Config, error) {
 
 	if err := validateConfig(&config); err != nil {
 		return nil, fmt.Errorf("config validation error: %w", err)
+	}
+
+	// State file location is relative to the config file's directory.
+	configDir := filepath.Dir(path)
+	switch {
+	case config.StatePath == "":
+		config.StatePath = filepath.Join(configDir, defaultStateFile)
+	case !filepath.IsAbs(config.StatePath):
+		config.StatePath = filepath.Join(configDir, config.StatePath)
 	}
 
 	log.Info("Configuration loaded: %d source(s) configured", len(config.Sources))

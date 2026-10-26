@@ -471,3 +471,120 @@ func TestDeleteAfterForward_Default(t *testing.T) {
 		t.Error("expected deleteAfterForward default to be false")
 	}
 }
+
+func localTrackingConfig(sources ...SourceConfig) *Config {
+	return &Config{
+		Target: TargetConfig{
+			Host: "imap.gmail.com",
+			Port: 993,
+			Auth: Auth{User: "user@gmail.com", Pass: "pass"},
+		},
+		Sources: sources,
+	}
+}
+
+func trackedSource(name, trackingID string) SourceConfig {
+	return SourceConfig{
+		Name: name, Host: "imap.example.com", Port: 993,
+		Auth:          Auth{User: "u", Pass: "p"},
+		LocalTracking: true,
+		TrackingID:    trackingID,
+	}
+}
+
+func TestValidateConfig_LocalTrackingDefaultsToFalse(t *testing.T) {
+	c := localTrackingConfig(SourceConfig{
+		Name: "Work", Host: "imap.work.com", Port: 993, Auth: Auth{User: "u", Pass: "p"},
+	})
+	if err := validateConfig(c); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if c.Sources[0].LocalTracking {
+		t.Error("expected LocalTracking to default to false")
+	}
+	if c.usesLocalTracking() {
+		t.Error("expected usesLocalTracking to be false")
+	}
+}
+
+func TestValidateConfig_LocalTrackingWithDelete(t *testing.T) {
+	s := trackedSource("Work", "work")
+	s.DeleteAfterForward = true
+	err := validateConfig(localTrackingConfig(s))
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "sources[0].localTracking") || !strings.Contains(err.Error(), "deleteAfterForward") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateConfig_LocalRequiresTrackingID(t *testing.T) {
+	err := validateConfig(localTrackingConfig(trackedSource("Work", "")))
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "sources[0].trackingId") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateConfig_LocalDuplicateTrackingID(t *testing.T) {
+	err := validateConfig(localTrackingConfig(trackedSource("A", "same"), trackedSource("B", "same")))
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "sources[1].trackingId") || !strings.Contains(err.Error(), "sources[0]") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateConfig_NonLocalIgnoresTrackingID(t *testing.T) {
+	plain := func(name string) SourceConfig {
+		return SourceConfig{
+			Name: name, Host: "imap.example.com", Port: 993,
+			Auth: Auth{User: "u", Pass: "p"}, TrackingID: "same",
+		}
+	}
+	c := localTrackingConfig(plain("A"), plain("B"), trackedSource("C", "same"))
+	if err := validateConfig(c); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !c.usesLocalTracking() {
+		t.Error("expected usesLocalTracking to be true")
+	}
+}
+
+func TestLoadConfig_StatePath(t *testing.T) {
+	const base = `{
+		"target": {"host": "imap.gmail.com", "port": 993, "auth": {"user": "u", "pass": "p"}},
+		%s
+		"sources": [{"name": "W", "host": "h", "port": 993, "auth": {"user": "u", "pass": "p"}}]
+	}`
+	abs := filepath.Join(t.TempDir(), "abs.db")
+	tests := []struct {
+		name  string
+		extra string
+		want  func(dir string) string
+	}{
+		{"default", ``, func(dir string) string { return filepath.Join(dir, "state.db") }},
+		{"relative", `"statePath": "sub/x.db",`, func(dir string) string { return filepath.Join(dir, "sub/x.db") }},
+		{"absolute", `"statePath": "` + abs + `",`, func(string) string { return abs }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "config.json")
+			if err := os.WriteFile(path, []byte(strings.Replace(base, "%s", tt.extra, 1)), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := loadConfig(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if want := tt.want(dir); cfg.StatePath != want {
+				t.Errorf("StatePath = %q, want %q", cfg.StatePath, want)
+			}
+		})
+	}
+}

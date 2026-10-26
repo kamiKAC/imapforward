@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"reflect"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/emersion/go-imap/v2"
 )
@@ -18,7 +20,7 @@ func TestForwarder_GetStatus_Initial(t *testing.T) {
 		Folders: []string{"INBOX"},
 	}
 
-	fwd := NewForwarder(source, nil, nil)
+	fwd := NewForwarder(source, nil, nil, nil)
 	status := fwd.GetStatus()
 
 	if status.Name != "Test" {
@@ -47,7 +49,7 @@ func TestForwarder_StatusUpdates(t *testing.T) {
 
 	var mu sync.Mutex
 	var lastStatus ForwarderStatus
-	fwd := NewForwarder(source, nil, func(s ForwarderStatus) {
+	fwd := NewForwarder(source, nil, nil, func(s ForwarderStatus) {
 		mu.Lock()
 		lastStatus = s
 		mu.Unlock()
@@ -83,7 +85,7 @@ func TestForwarder_Stop(t *testing.T) {
 	}
 
 	mockSender := &mockSender{}
-	fwd := NewForwarder(source, mockSender, nil)
+	fwd := NewForwarder(source, mockSender, nil, nil)
 
 	fwd.setConnected(true)
 	fwd.Stop()
@@ -109,7 +111,7 @@ func TestForwarder_RunCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Cancel immediately
 
-	fwd := NewForwarder(source, &mockSender{}, nil)
+	fwd := NewForwarder(source, &mockSender{}, nil, nil)
 
 	// Should return immediately due to cancelled context
 	fwd.Run(ctx)
@@ -184,6 +186,51 @@ func TestShouldFallbackFromIdleError(t *testing.T) {
 				t.Fatalf("shouldFallbackFromIdleError(%v) = %v, want %v", tt.err, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestSearchCriteria_FlagTracking(t *testing.T) {
+	c := searchCriteria(false)
+	want := []imap.Flag{imap.FlagSeen, imap.Flag(forwardedFlag)}
+	if !reflect.DeepEqual(c.NotFlag, want) {
+		t.Errorf("NotFlag = %v, want %v", c.NotFlag, want)
+	}
+}
+
+func TestSearchCriteria_LocalTracking(t *testing.T) {
+	c := searchCriteria(true)
+	want := []imap.Flag{imap.FlagSeen}
+	if !reflect.DeepEqual(c.NotFlag, want) {
+		t.Errorf("NotFlag = %v, want %v", c.NotFlag, want)
+	}
+}
+
+func TestForwarder_LocalTrackingRequiresState(t *testing.T) {
+	source := SourceConfig{
+		Name:          "Test",
+		Host:          "invalid.host.example",
+		Port:          993,
+		Secure:        boolPtr(true),
+		Auth:          Auth{User: "u", Pass: "p"},
+		Folders:       []string{"INBOX"},
+		LocalTracking: true,
+		TrackingID:    "test",
+	}
+	fwd := NewForwarder(source, &mockSender{}, nil, nil)
+
+	done := make(chan struct{})
+	go func() {
+		fwd.Run(context.Background())
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run should return immediately when the state store is missing")
+	}
+	if fwd.GetStatus().Error == "" {
+		t.Error("expected an error status when the state store is missing")
 	}
 }
 

@@ -8,15 +8,17 @@ import (
 // Manager manages multiple forwarder goroutines.
 type Manager struct {
 	config     *Config
+	state      *StateStore // nil unless a source uses local tracking
 	forwarders []*Forwarder
 	statuses   sync.Map
 	logger     *Logger
 }
 
 // NewManager creates a new Manager from the given config.
-func NewManager(config *Config) *Manager {
+func NewManager(config *Config, state *StateStore) *Manager {
 	return &Manager{
 		config: config,
+		state:  state,
 		logger: newLogger("manager"),
 	}
 }
@@ -40,7 +42,7 @@ func (m *Manager) StartAll(ctx context.Context) {
 			sender = NewIMAPSender(m.config.Target, DefaultIMAPDial)
 		}
 
-		fwd := NewForwarder(source, sender, func(status ForwarderStatus) {
+		fwd := NewForwarder(source, sender, m.state, func(status ForwarderStatus) {
 			m.statuses.Store(status.Name, status)
 		})
 		m.forwarders = append(m.forwarders, fwd)

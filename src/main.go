@@ -64,10 +64,20 @@ func main() {
 		os.Exit(1)
 	}
 
+	var state *StateStore
+	if config.usesLocalTracking() {
+		state, err = OpenStateStore(config.StatePath)
+		if err != nil {
+			log.Error("State store error: %v", err)
+			os.Exit(1)
+		}
+		log.Info("Using state file %s", config.StatePath)
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	manager := NewManager(config)
+	manager := NewManager(config, state)
 	healthServer := StartHealthServer(manager, config.HealthCheck.Port)
 
 	// Graceful shutdown
@@ -82,6 +92,11 @@ func main() {
 
 	log.Info("imapforward v%s starting (method: %s)", version, config.ForwardMethod)
 	manager.StartAll(ctx)
+	if state != nil {
+		if err := state.Close(); err != nil {
+			log.Warn("Error closing state store: %v", err)
+		}
+	}
 	log.Info("Shutdown complete")
 }
 

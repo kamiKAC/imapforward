@@ -59,6 +59,7 @@ func DefaultIMAPDial(host string, port int, secure *bool) (IMAPClient, error) {
 type Forwarder struct {
 	source SourceConfig
 	sender Sender
+	state  *StateStore // nil unless the source uses local tracking
 	logger *Logger
 
 	mu        sync.Mutex
@@ -73,11 +74,13 @@ type Forwarder struct {
 func NewForwarder(
 	source SourceConfig,
 	sender Sender,
+	state *StateStore,
 	onStatusChange func(ForwarderStatus),
 ) *Forwarder {
 	return &Forwarder{
 		source:         source,
 		sender:         sender,
+		state:          state,
 		logger:         newLogger(source.Name),
 		onStatusChange: onStatusChange,
 	}
@@ -115,6 +118,14 @@ func (f *Forwarder) setLastSync() {
 
 // Run starts the forwarding loop. It blocks until ctx is cancelled.
 func (f *Forwarder) Run(ctx context.Context) {
+	if f.source.LocalTracking && f.state == nil {
+		msg := "local tracking is enabled but no state store is available"
+		f.setError(msg)
+		f.notifyStatus()
+		f.logger.Error("%s", msg)
+		return
+	}
+
 	delay := reconnectBaseDelay
 	for {
 		err := f.runOnce(ctx)
@@ -242,12 +253,24 @@ func (f *Forwarder) monitorFolder(ctx context.Context, folder string, listFolder
 	}
 
 	// Select the folder
-	if _, err := client.Select(folder, nil).Wait(); err != nil {
+	selectData, err := client.Select(folder, nil).Wait()
+	if err != nil {
 		return fmt.Errorf("select %q: %w", folder, err)
 	}
 
+	// Recorded UIDs are only valid for the UIDVALIDITY they were seen under.
+	if f.source.LocalTracking {
+		reset, err := f.state.SyncUIDValidity(f.source.TrackingID, folder, selectData.UIDValidity)
+		if err != nil {
+			return fmt.Errorf("sync UIDVALIDITY for %q: %w", folder, err)
+		}
+		if reset {
+			f.logger.Warn("UIDVALIDITY of %q changed; forgetting previously forwarded messages in this folder", folder)
+		}
+	}
+
 	// Forward any existing unforwarded messages
-	if err := f.forwardNewMessages(ctx, client); err != nil {
+	if err := f.forwardNewMessages(ctx, client, folder); err != nil {
 		f.logger.Error("Error forwarding messages in %q: %v", folder, err)
 	}
 
@@ -318,7 +341,7 @@ func (f *Forwarder) watchFolder(ctx context.Context, client *imapclient.Client, 
 		}
 
 		f.logger.Info("New message(s) detected in %s", folder)
-		if err := f.forwardNewMessages(ctx, client); err != nil {
+		if err := f.forwardNewMessages(ctx, client, folder); err != nil {
 			f.logger.Error("Error forwarding messages in %q: %v", folder, err)
 		}
 	}
@@ -340,7 +363,7 @@ func (f *Forwarder) pollFolder(ctx context.Context, client *imapclient.Client, f
 			if err := client.Noop().Wait(); err != nil {
 				return fmt.Errorf("noop: %w", err)
 			}
-			if err := f.forwardNewMessages(ctx, client); err != nil {
+			if err := f.forwardNewMessages(ctx, client, folder); err != nil {
 				f.logger.Error("Error forwarding messages in %q: %v", folder, err)
 			}
 		}
@@ -363,17 +386,31 @@ func shouldFallbackFromIdleError(err error) bool {
 		strings.Contains(msg, "not supported")
 }
 
-func (f *Forwarder) forwardNewMessages(ctx context.Context, client *imapclient.Client) error {
-	criteria := &imap.SearchCriteria{
+// searchCriteria selects the messages that may still need forwarding. With
+// local tracking the $Forwarded flag is not used; already forwarded UIDs are
+// filtered out against the state store instead.
+func searchCriteria(localTracking bool) *imap.SearchCriteria {
+	if localTracking {
+		return &imap.SearchCriteria{NotFlag: []imap.Flag{imap.FlagSeen}}
+	}
+	return &imap.SearchCriteria{
 		NotFlag: []imap.Flag{imap.FlagSeen, imap.Flag(forwardedFlag)},
 	}
+}
 
-	searchData, err := client.UIDSearch(criteria, nil).Wait()
+func (f *Forwarder) forwardNewMessages(ctx context.Context, client *imapclient.Client, folder string) error {
+	searchData, err := client.UIDSearch(searchCriteria(f.source.LocalTracking), nil).Wait()
 	if err != nil {
 		return fmt.Errorf("search: %w", err)
 	}
 
 	uids := searchData.AllUIDs()
+	if f.source.LocalTracking {
+		uids, err = f.state.FilterUnforwarded(f.source.TrackingID, folder, uids)
+		if err != nil {
+			return fmt.Errorf("filter forwarded: %w", err)
+		}
+	}
 	if len(uids) == 0 {
 		return nil
 	}
@@ -384,7 +421,7 @@ func (f *Forwarder) forwardNewMessages(ctx context.Context, client *imapclient.C
 		if ctx.Err() != nil {
 			return nil
 		}
-		if err := f.forwardMessage(ctx, client, uid); err != nil {
+		if err := f.forwardMessage(ctx, client, folder, uid); err != nil {
 			f.logger.Error("Message UID %d: failed to forward: %v", uid, err)
 		}
 	}
@@ -392,7 +429,7 @@ func (f *Forwarder) forwardNewMessages(ctx context.Context, client *imapclient.C
 	return nil
 }
 
-func (f *Forwarder) forwardMessage(ctx context.Context, client *imapclient.Client, uid imap.UID) error {
+func (f *Forwarder) forwardMessage(ctx context.Context, client *imapclient.Client, folder string, uid imap.UID) error {
 	fetchOpts := &imap.FetchOptions{
 		UID:   true,
 		Flags: true,
@@ -434,14 +471,21 @@ func (f *Forwarder) forwardMessage(ctx context.Context, client *imapclient.Clien
 
 	f.logger.Info("Message UID %d: forwarded successfully", uid)
 
-	// Mark as forwarded on source
-	storeCmd := client.Store(uidSet, &imap.StoreFlags{
-		Op:     imap.StoreFlagsAdd,
-		Silent: true,
-		Flags:  []imap.Flag{imap.Flag(forwardedFlag)},
-	}, nil)
-	if err := storeCmd.Close(); err != nil {
-		f.logger.Warn("Message UID %d: failed to set forwarded flag: %v", uid, err)
+	if f.source.LocalTracking {
+		// Remember locally; the source mailbox is left untouched.
+		if err := f.state.MarkForwarded(f.source.TrackingID, folder, uid); err != nil {
+			f.logger.Error("Message UID %d: failed to record forwarded state (may be forwarded again): %v", uid, err)
+		}
+	} else {
+		// Mark as forwarded on source
+		storeCmd := client.Store(uidSet, &imap.StoreFlags{
+			Op:     imap.StoreFlagsAdd,
+			Silent: true,
+			Flags:  []imap.Flag{imap.Flag(forwardedFlag)},
+		}, nil)
+		if err := storeCmd.Close(); err != nil {
+			f.logger.Warn("Message UID %d: failed to set forwarded flag: %v", uid, err)
+		}
 	}
 
 	// Optionally delete after forwarding

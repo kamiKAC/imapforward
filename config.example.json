@@ -22,8 +22,10 @@
       },
       "folders": ["INBOX"],
       "deleteAfterForward": false,
-      "localTracking": true,
-      "trackingId": "work",
+      "localTracking": {
+        "enabled": true,
+        "trackingId": "work"
+      },
       "targetFolder": "Import/Work"
     },
     {

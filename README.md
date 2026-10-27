@@ -96,8 +96,8 @@ Create a `config.json` file. You can use the [online configuration generator](ht
 | `sources[].folders` | string[] | no | `["INBOX"]` | Folders to monitor |
 | `sources[].deleteAfterForward` | boolean | no | `false` | Delete messages after forwarding |
 | `sources[].targetFolder` | string | no | — | Target mailbox for this source. Falls back to `target.folder`. Auto-created if it doesn't exist |
-| `sources[].localTracking` | boolean | no | `false` | Remember forwarded messages in a local state file instead of the `$Forwarded` IMAP flag. Cannot be combined with `deleteAfterForward`. See [Tracking forwarded messages](#tracking-forwarded-messages) |
-| `sources[].trackingId` | string | with `localTracking` | — | Stable, unique identifier of this source in the state file. Ignored unless `localTracking` is `true` |
+| `sources[].localTracking.enabled` | boolean | no | `false` | Remember forwarded messages in a local state file instead of the `$Forwarded` IMAP flag. Cannot be combined with `deleteAfterForward`. See [Tracking forwarded messages](#tracking-forwarded-messages) |
+| `sources[].localTracking.trackingId` | string | when enabled | — | Stable, unique identifier of this source in the state file. Ignored unless `localTracking.enabled` is `true` |
 | `statePath` | string | no | `state.db` next to the config file | State file location (used only when some source has `localTracking`). Relative paths are resolved against the config file's directory |
 | `healthCheck.port` | number | no | `8080` | HTTP health check server port |
 
@@ -203,16 +203,15 @@ For those sources, enable local tracking:
       "host": "imap.poczta.onet.pl",
       "port": 993,
       "auth": { "user": "user@poczta.onet.pl", "pass": "password" },
-      "localTracking": true,
-      "trackingId": "onet"
+      "localTracking": { "enabled": true, "trackingId": "onet" }
     }
   ]
 }
 ```
 
 - The UID of each forwarded message is stored in a small embedded database (`statePath`) right after it is sent. The source mailbox is not modified.
-- `trackingId` is required and must be unique across sources with `localTracking`. It identifies the source in the state file, so do not change it after the first run.
-- `localTracking` cannot be combined with `deleteAfterForward`.
+- `localTracking.trackingId` is required and must be unique across sources with `localTracking.enabled`. It identifies the source in the state file, so do not change it after the first run.
+- `localTracking.enabled` cannot be combined with `deleteAfterForward`.
 - On the first run the state file is empty, so **all unread messages in the monitored folders are forwarded**. Later runs forward only new ones. Stopping and restarting is safe at any point.
 - Messages you read in your mailbox before they are forwarded are skipped, as with the flag method.
 - If the server changes a folder's `UIDVALIDITY`, the remembered UIDs for that folder are discarded (a warning is logged) and unread messages are forwarded again.

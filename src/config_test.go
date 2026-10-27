@@ -487,8 +487,7 @@ func trackedSource(name, trackingID string) SourceConfig {
 	return SourceConfig{
 		Name: name, Host: "imap.example.com", Port: 993,
 		Auth:          Auth{User: "u", Pass: "p"},
-		LocalTracking: true,
-		TrackingID:    trackingID,
+		LocalTracking: LocalTrackingConfig{Enabled: true, TrackingID: trackingID},
 	}
 }
 
@@ -499,7 +498,7 @@ func TestValidateConfig_LocalTrackingDefaultsToFalse(t *testing.T) {
 	if err := validateConfig(c); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if c.Sources[0].LocalTracking {
+	if c.Sources[0].LocalTracking.Enabled {
 		t.Error("expected LocalTracking to default to false")
 	}
 	if c.usesLocalTracking() {
@@ -514,7 +513,7 @@ func TestValidateConfig_LocalTrackingWithDelete(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	if !strings.Contains(err.Error(), "sources[0].localTracking") || !strings.Contains(err.Error(), "deleteAfterForward") {
+	if !strings.Contains(err.Error(), "sources[0].localTracking.enabled") || !strings.Contains(err.Error(), "deleteAfterForward") {
 		t.Errorf("unexpected error: %v", err)
 	}
 }
@@ -524,7 +523,7 @@ func TestValidateConfig_LocalRequiresTrackingID(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	if !strings.Contains(err.Error(), "sources[0].trackingId") {
+	if !strings.Contains(err.Error(), "sources[0].localTracking.trackingId") {
 		t.Errorf("unexpected error: %v", err)
 	}
 }
@@ -534,7 +533,7 @@ func TestValidateConfig_LocalDuplicateTrackingID(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	if !strings.Contains(err.Error(), "sources[1].trackingId") || !strings.Contains(err.Error(), "sources[0]") {
+	if !strings.Contains(err.Error(), "sources[1].localTracking.trackingId") || !strings.Contains(err.Error(), "sources[0]") {
 		t.Errorf("unexpected error: %v", err)
 	}
 }
@@ -543,7 +542,8 @@ func TestValidateConfig_NonLocalIgnoresTrackingID(t *testing.T) {
 	plain := func(name string) SourceConfig {
 		return SourceConfig{
 			Name: name, Host: "imap.example.com", Port: 993,
-			Auth: Auth{User: "u", Pass: "p"}, TrackingID: "same",
+			Auth:          Auth{User: "u", Pass: "p"},
+			LocalTracking: LocalTrackingConfig{TrackingID: "same"},
 		}
 	}
 	c := localTrackingConfig(plain("A"), plain("B"), trackedSource("C", "same"))
@@ -586,5 +586,28 @@ func TestLoadConfig_StatePath(t *testing.T) {
 				t.Errorf("StatePath = %q, want %q", cfg.StatePath, want)
 			}
 		})
+	}
+}
+
+func TestLoadConfig_LocalTrackingObject(t *testing.T) {
+	const raw = `{
+		"target": {"host": "imap.gmail.com", "port": 993, "auth": {"user": "u", "pass": "p"}},
+		"sources": [{"name": "W", "host": "h", "port": 993, "auth": {"user": "u", "pass": "p"},
+			"localTracking": {"enabled": true, "trackingId": "onet"}}]
+	}`
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := loadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lt := cfg.Sources[0].LocalTracking
+	if !lt.Enabled || lt.TrackingID != "onet" {
+		t.Errorf("LocalTracking = %+v, want enabled with trackingId onet", lt)
+	}
+	if !cfg.usesLocalTracking() {
+		t.Error("expected usesLocalTracking to be true")
 	}
 }

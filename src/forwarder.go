@@ -122,7 +122,7 @@ func (f *Forwarder) setLastSync() {
 
 // Run starts the forwarding loop. It blocks until ctx is cancelled.
 func (f *Forwarder) Run(ctx context.Context) {
-	if f.source.LocalTracking && f.state == nil {
+	if f.source.LocalTracking.Enabled && f.state == nil {
 		msg := "local tracking is enabled but no state store is available"
 		f.setError(msg)
 		f.notifyStatus()
@@ -263,8 +263,8 @@ func (f *Forwarder) monitorFolder(ctx context.Context, folder string, listFolder
 	}
 
 	// Recorded UIDs are only valid for the UIDVALIDITY they were seen under.
-	if f.source.LocalTracking {
-		reset, err := f.state.SyncUIDValidity(f.source.TrackingID, folder, selectData.UIDValidity)
+	if f.source.LocalTracking.Enabled {
+		reset, err := f.state.SyncUIDValidity(f.source.LocalTracking.TrackingID, folder, selectData.UIDValidity)
 		if err != nil {
 			return fmt.Errorf("sync UIDVALIDITY for %q: %w", folder, err)
 		}
@@ -405,7 +405,7 @@ func searchCriteria(localTracking bool) *imap.SearchCriteria {
 // pendingUIDs drops UIDs already recorded in the state store or forwarded by
 // this process (see recordForwarded).
 func (f *Forwarder) pendingUIDs(folder string, uids []imap.UID) ([]imap.UID, error) {
-	pending, err := f.state.FilterUnforwarded(f.source.TrackingID, folder, uids)
+	pending, err := f.state.FilterUnforwarded(f.source.LocalTracking.TrackingID, folder, uids)
 	if err != nil {
 		return nil, err
 	}
@@ -424,7 +424,7 @@ func (f *Forwarder) pendingUIDs(folder string, uids []imap.UID) ([]imap.UID, err
 // on every check; the failure is logged and surfaced in the status instead.
 func (f *Forwarder) recordForwarded(folder string, uid imap.UID) {
 	f.rememberSent(folder, uid)
-	if err := f.state.MarkForwarded(f.source.TrackingID, folder, uid); err != nil {
+	if err := f.state.MarkForwarded(f.source.LocalTracking.TrackingID, folder, uid); err != nil {
 		f.logger.Error("Message UID %d: failed to record forwarded state (it may be forwarded again after a restart): %v", uid, err)
 		f.setError(fmt.Sprintf("state store write failed: %v", err))
 		f.notifyStatus()
@@ -451,13 +451,13 @@ func (f *Forwarder) wasSent(folder string, uid imap.UID) bool {
 }
 
 func (f *Forwarder) forwardNewMessages(ctx context.Context, client *imapclient.Client, folder string) error {
-	searchData, err := client.UIDSearch(searchCriteria(f.source.LocalTracking), nil).Wait()
+	searchData, err := client.UIDSearch(searchCriteria(f.source.LocalTracking.Enabled), nil).Wait()
 	if err != nil {
 		return fmt.Errorf("search: %w", err)
 	}
 
 	uids := searchData.AllUIDs()
-	if f.source.LocalTracking {
+	if f.source.LocalTracking.Enabled {
 		uids, err = f.pendingUIDs(folder, uids)
 		if err != nil {
 			return fmt.Errorf("filter forwarded: %w", err)
@@ -523,7 +523,7 @@ func (f *Forwarder) forwardMessage(ctx context.Context, client *imapclient.Clien
 
 	f.logger.Info("Message UID %d: forwarded successfully", uid)
 
-	if f.source.LocalTracking {
+	if f.source.LocalTracking.Enabled {
 		// Remember locally; the source mailbox is left untouched.
 		f.recordForwarded(folder, uid)
 	} else {

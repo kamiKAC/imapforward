@@ -15,16 +15,22 @@ type Auth struct {
 
 // SourceConfig is the configuration for a source IMAP account.
 type SourceConfig struct {
-	Name               string   `json:"name"`
-	Host               string   `json:"host"`
-	Port               int      `json:"port"`
-	Secure             *bool    `json:"secure,omitempty"`
-	Auth               Auth     `json:"auth"`
-	Folders            []string `json:"folders,omitempty"`
-	DeleteAfterForward bool     `json:"deleteAfterForward,omitempty"`
-	TargetFolder       string   `json:"targetFolder,omitempty"`
-	LocalTracking      bool     `json:"localTracking,omitempty"`
-	TrackingID         string   `json:"trackingId,omitempty"`
+	Name               string              `json:"name"`
+	Host               string              `json:"host"`
+	Port               int                 `json:"port"`
+	Secure             *bool               `json:"secure,omitempty"`
+	Auth               Auth                `json:"auth"`
+	Folders            []string            `json:"folders,omitempty"`
+	DeleteAfterForward bool                `json:"deleteAfterForward,omitempty"`
+	TargetFolder       string              `json:"targetFolder,omitempty"`
+	LocalTracking      LocalTrackingConfig `json:"localTracking,omitempty"`
+}
+
+// LocalTrackingConfig makes a source remember forwarded messages in the local
+// state database instead of the $Forwarded IMAP flag.
+type LocalTrackingConfig struct {
+	Enabled    bool   `json:"enabled"`
+	TrackingID string `json:"trackingId,omitempty"`
 }
 
 // TargetConfig is the configuration for the target server (IMAP or SMTP).
@@ -67,7 +73,7 @@ const (
 // in the local state database instead of the $Forwarded IMAP flag.
 func (c *Config) usesLocalTracking() bool {
 	for i := range c.Sources {
-		if c.Sources[i].LocalTracking {
+		if c.Sources[i].LocalTracking.Enabled {
 			return true
 		}
 	}
@@ -161,17 +167,17 @@ func validateConfig(c *Config) error {
 		if len(s.Folders) == 0 {
 			s.Folders = []string{"INBOX"}
 		}
-		if s.LocalTracking {
+		if s.LocalTracking.Enabled {
 			if s.DeleteAfterForward {
-				return fmt.Errorf("sources[%d].localTracking cannot be combined with deleteAfterForward", i)
+				return fmt.Errorf("sources[%d].localTracking.enabled cannot be combined with deleteAfterForward", i)
 			}
-			if s.TrackingID == "" {
-				return fmt.Errorf("sources[%d].trackingId must be a non-empty string when localTracking is enabled", i)
+			if s.LocalTracking.TrackingID == "" {
+				return fmt.Errorf("sources[%d].localTracking.trackingId must be a non-empty string when localTracking.enabled is true", i)
 			}
-			if prev, ok := trackingIDs[s.TrackingID]; ok {
-				return fmt.Errorf("sources[%d].trackingId %q is already used by sources[%d]", i, s.TrackingID, prev)
+			if prev, ok := trackingIDs[s.LocalTracking.TrackingID]; ok {
+				return fmt.Errorf("sources[%d].localTracking.trackingId %q is already used by sources[%d]", i, s.LocalTracking.TrackingID, prev)
 			}
-			trackingIDs[s.TrackingID] = i
+			trackingIDs[s.LocalTracking.TrackingID] = i
 		}
 	}
 

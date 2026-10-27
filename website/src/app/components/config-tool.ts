@@ -785,7 +785,7 @@ export class ConfigTool {
           folders: this.parseFolders(s?.folders as string),
           deleteAfterForward: s?.deleteAfterForward ?? false,
           ...(tf ? {targetFolder: tf} : {}),
-          ...(s?.localTracking ? {localTracking: true, trackingId: s.trackingId || ''} : {}),
+          ...(s?.localTracking ? {localTracking: {enabled: true, trackingId: s.trackingId || ''}} : {}),
         };
       }),
       ...(anyLocalTracking && statePath ? {statePath} : {}),

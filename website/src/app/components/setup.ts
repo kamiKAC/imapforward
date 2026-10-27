@@ -99,7 +99,7 @@ volumes:
             <p>
               Some servers (e.g. <code>poczta.onet.pl</code>) accept the <code>$Forwarded</code> flag but forget it
               when the connection closes, so every restart forwards all unread mail again. Set
-              <code>"localTracking": true</code> and a unique <code>"trackingId"</code> on such a source to remember
+              <code>"localTracking"</code> with <code>"enabled": true</code> and a unique <code>"trackingId"</code> on such a source to remember
               forwarded messages in a state file instead (<code>"statePath"</code>, e.g. <code>/data/state.db</code>
               with Docker). The mailbox itself is not modified. It cannot be combined with
               <code>deleteAfterForward</code>, and the first run forwards all unread messages.

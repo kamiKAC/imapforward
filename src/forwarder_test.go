@@ -213,8 +213,7 @@ func TestForwarder_LocalTrackingRequiresState(t *testing.T) {
 		Secure:        boolPtr(true),
 		Auth:          Auth{User: "u", Pass: "p"},
 		Folders:       []string{"INBOX"},
-		LocalTracking: true,
-		TrackingID:    "test",
+		LocalTracking: LocalTrackingConfig{Enabled: true, TrackingID: "test"},
 	}
 	fwd := NewForwarder(source, &mockSender{}, nil, nil)
 
@@ -244,8 +243,7 @@ func localTrackingForwarder(t *testing.T) (*Forwarder, *StateStore) {
 		Secure:        boolPtr(true),
 		Auth:          Auth{User: "u", Pass: "p"},
 		Folders:       []string{"INBOX"},
-		LocalTracking: true,
-		TrackingID:    "test",
+		LocalTracking: LocalTrackingConfig{Enabled: true, TrackingID: "test"},
 	}
 	return NewForwarder(source, &mockSender{}, store, nil), store
 }

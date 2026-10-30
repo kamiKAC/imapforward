@@ -89,6 +89,16 @@ import {ScrollAnimate} from '../directives/scroll-animate';
           </div>
 
           <div class="detail-card" appScrollAnimate>
+            <h3>Mark as Read</h3>
+            <p>
+              Some servers (e.g. <code>poczta.onet.pl</code>) accept the <code>$Forwarded</code> flag but forget it
+              when the connection closes, so every restart forwards all unread mail again. Set
+              <code>"seenAfterForward": true</code> on such a source to also mark each forwarded message as read,
+              so it is not forwarded again. It cannot be combined with <code>deleteAfterForward</code>.
+            </p>
+          </div>
+
+          <div class="detail-card" appScrollAnimate>
             <h3>Health Check</h3>
             <p>
               Built-in HTTP health check at <code>/health</code> on port <strong>8080</strong> (configurable).

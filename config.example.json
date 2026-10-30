@@ -21,6 +21,7 @@
       },
       "folders": ["INBOX"],
       "deleteAfterForward": false,
+      "seenAfterForward": true,
       "targetFolder": "Import/Work"
     },
     {

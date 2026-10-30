@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"reflect"
 	"sync"
 	"testing"
 
@@ -182,6 +183,25 @@ func TestShouldFallbackFromIdleError(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := shouldFallbackFromIdleError(tt.err); got != tt.want {
 				t.Fatalf("shouldFallbackFromIdleError(%v) = %v, want %v", tt.err, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestForwardedFlags(t *testing.T) {
+	tests := []struct {
+		name string
+		seen bool
+		want []imap.Flag
+	}{
+		{"default", false, []imap.Flag{imap.Flag(forwardedFlag)}},
+		{"seenAfterForward", true, []imap.Flag{imap.Flag(forwardedFlag), imap.FlagSeen}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := forwardedFlags(SourceConfig{SeenAfterForward: tt.seen})
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("forwardedFlags = %v, want %v", got, tt.want)
 			}
 		})
 	}

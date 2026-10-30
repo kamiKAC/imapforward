@@ -95,6 +95,7 @@ Create a `config.json` file. You can use the [online configuration generator](ht
 | `sources[].auth.pass` | string | yes | — | IMAP password |
 | `sources[].folders` | string[] | no | `["INBOX"]` | Folders to monitor |
 | `sources[].deleteAfterForward` | boolean | no | `false` | Delete messages after forwarding |
+| `sources[].seenAfterForward` | boolean | no | `false` | Mark messages as read (`\Seen`) on the source after forwarding. Cannot be combined with `deleteAfterForward`. See [Servers that forget the `$Forwarded` flag](#servers-that-forget-the-forwarded-flag) |
 | `sources[].targetFolder` | string | no | — | Target mailbox for this source. Falls back to `target.folder`. Auto-created if it doesn't exist |
 | `healthCheck.port` | number | no | `8080` | HTTP health check server port |
 
@@ -277,6 +278,26 @@ Response:
 
 Status values: `ok` (all connected), `degraded` (some connected), `error` (none connected).
 
+### Servers that forget the `$Forwarded` flag
+
+Some servers (for example `poczta.onet.pl`) accept the `$Forwarded` flag but drop it when the connection closes, so after every restart or reconnect all unread messages would be forwarded again. Standard flags such as `\Seen` are kept, so for these sources enable `seenAfterForward`:
+
+```json
+{
+  "name": "Onet",
+  "host": "imap.poczta.onet.pl",
+  "port": 993,
+  "auth": { "user": "user@poczta.onet.pl", "pass": "password" },
+  "seenAfterForward": true
+}
+```
+
+- After a message is forwarded it is also marked as read (`\Seen`) on the source. Messages that are read are never forwarded, so they are not sent again.
+- Forwarded messages therefore appear as read in the source mailbox.
+- Messages you read in your mailbox before they are forwarded are skipped.
+- `seenAfterForward` cannot be combined with `deleteAfterForward`.
+- If marking fails (for example the connection drops right after sending), that single message may be forwarded again.
+
 ## How It Works
 
 1. Connects to each configured IMAP source account (one connection per folder)
@@ -285,6 +306,6 @@ Status values: `ok` (all connected), `degraded` (some connected), `error` (none 
    - **IMAP**: Appends raw RFC822 to the target mailbox, preserving all original headers
    - **SMTP**: Sends via SMTP with Reply-To injection for reply/reply-all support
    - **Gmail API**: Imports via Gmail API with spam filtering and full header preservation
-4. Marks forwarded messages with a `$Forwarded` IMAP flag
+4. Marks forwarded messages with a `$Forwarded` IMAP flag (and `\Seen` too for sources with `seenAfterForward`)
 5. Enters IMAP IDLE mode to watch for new messages in real-time, or falls back to polling when the server doesn't support IDLE
 6. Automatically reconnects with exponential backoff on connection loss

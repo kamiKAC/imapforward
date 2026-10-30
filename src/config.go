@@ -21,6 +21,7 @@ type SourceConfig struct {
 	Auth               Auth     `json:"auth"`
 	Folders            []string `json:"folders,omitempty"`
 	DeleteAfterForward bool     `json:"deleteAfterForward,omitempty"`
+	SeenAfterForward   bool     `json:"seenAfterForward,omitempty"`
 	TargetFolder       string   `json:"targetFolder,omitempty"`
 }
 
@@ -141,6 +142,9 @@ func validateConfig(c *Config) error {
 		}
 		if len(s.Folders) == 0 {
 			s.Folders = []string{"INBOX"}
+		}
+		if s.SeenAfterForward && s.DeleteAfterForward {
+			return fmt.Errorf("sources[%d].seenAfterForward cannot be combined with deleteAfterForward", i)
 		}
 	}
 

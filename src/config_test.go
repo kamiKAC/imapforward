@@ -471,3 +471,42 @@ func TestDeleteAfterForward_Default(t *testing.T) {
 		t.Error("expected deleteAfterForward default to be false")
 	}
 }
+
+func TestSeenAfterForward_Default(t *testing.T) {
+	c := &Config{
+		Target:  TargetConfig{Host: "h", Port: 993, Auth: Auth{User: "u", Pass: "p"}},
+		Sources: []SourceConfig{{Name: "S", Host: "h", Port: 993, Auth: Auth{User: "u", Pass: "p"}}},
+	}
+	if err := validateConfig(c); err != nil {
+		t.Fatal(err)
+	}
+	if c.Sources[0].SeenAfterForward {
+		t.Error("expected seenAfterForward default to be false")
+	}
+}
+
+func TestValidateConfig_SeenAfterForward(t *testing.T) {
+	c := &Config{
+		Target:  TargetConfig{Host: "h", Port: 993, Auth: Auth{User: "u", Pass: "p"}},
+		Sources: []SourceConfig{{Name: "S", Host: "h", Port: 993, Auth: Auth{User: "u", Pass: "p"}, SeenAfterForward: true}},
+	}
+	if err := validateConfig(c); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestValidateConfig_SeenAfterForwardWithDelete(t *testing.T) {
+	c := &Config{
+		Target: TargetConfig{Host: "h", Port: 993, Auth: Auth{User: "u", Pass: "p"}},
+		Sources: []SourceConfig{
+			{Name: "S", Host: "h", Port: 993, Auth: Auth{User: "u", Pass: "p"}, SeenAfterForward: true, DeleteAfterForward: true},
+		},
+	}
+	err := validateConfig(c)
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if !strings.Contains(err.Error(), "sources[0].seenAfterForward") || !strings.Contains(err.Error(), "deleteAfterForward") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}

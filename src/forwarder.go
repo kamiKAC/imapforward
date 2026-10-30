@@ -363,6 +363,17 @@ func shouldFallbackFromIdleError(err error) bool {
 		strings.Contains(msg, "not supported")
 }
 
+// forwardedFlags returns the flags set on a message once it has been
+// forwarded: always $Forwarded, plus \Seen when seenAfterForward is enabled
+// (for servers that do not keep custom keywords across connections).
+func forwardedFlags(source SourceConfig) []imap.Flag {
+	flags := []imap.Flag{imap.Flag(forwardedFlag)}
+	if source.SeenAfterForward {
+		flags = append(flags, imap.FlagSeen)
+	}
+	return flags
+}
+
 func (f *Forwarder) forwardNewMessages(ctx context.Context, client *imapclient.Client) error {
 	criteria := &imap.SearchCriteria{
 		NotFlag: []imap.Flag{imap.FlagSeen, imap.Flag(forwardedFlag)},
@@ -438,10 +449,10 @@ func (f *Forwarder) forwardMessage(ctx context.Context, client *imapclient.Clien
 	storeCmd := client.Store(uidSet, &imap.StoreFlags{
 		Op:     imap.StoreFlagsAdd,
 		Silent: true,
-		Flags:  []imap.Flag{imap.Flag(forwardedFlag)},
+		Flags:  forwardedFlags(f.source),
 	}, nil)
 	if err := storeCmd.Close(); err != nil {
-		f.logger.Warn("Message UID %d: failed to set forwarded flag: %v", uid, err)
+		f.logger.Warn("Message UID %d: failed to set forwarded flags: %v", uid, err)
 	}
 
 	// Optionally delete after forwarding

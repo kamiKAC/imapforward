@@ -212,6 +212,13 @@ const IMPLICIT_TLS_PORTS = new Set([465, 993]);
                             <span>Delete after forward</span>
                           </label>
                         </div>
+                        <div class="field field-xs">
+                          <label class="toggle-label">
+                            <input type="checkbox" formControlName="seenAfterForward" />
+                            <span>Mark as read after forward</span>
+                          </label>
+                          <span class="hint">For servers that forget the $Forwarded flag. Not combinable with delete</span>
+                        </div>
                       </div>
                     </div>
                   }
@@ -754,6 +761,7 @@ export class ConfigTool {
           },
           folders: this.parseFolders(s?.folders as string),
           deleteAfterForward: s?.deleteAfterForward ?? false,
+          ...(s?.seenAfterForward ? {seenAfterForward: true} : {}),
           ...(tf ? {targetFolder: tf} : {}),
         };
       }),
@@ -771,7 +779,7 @@ export class ConfigTool {
   }
 
   protected createSource(): FormGroup {
-    return this.fb.group({
+    const group = this.fb.group({
       name: ['', Validators.required],
       host: ['', Validators.required],
       port: [993, Validators.required],
@@ -782,8 +790,28 @@ export class ConfigTool {
       }),
       folders: ['INBOX'],
       deleteAfterForward: [false],
+      seenAfterForward: [false],
       targetFolder: [''],
     });
+
+    // Delete-after-forward and seen-after-forward are mutually exclusive.
+    const deleteAfter = group.get('deleteAfterForward')!;
+    const seenAfter = group.get('seenAfterForward')!;
+    deleteAfter.valueChanges.subscribe((on) => {
+      if (on) {
+        seenAfter.disable({emitEvent: false});
+      } else {
+        seenAfter.enable({emitEvent: false});
+      }
+    });
+    seenAfter.valueChanges.subscribe((on) => {
+      if (on) {
+        deleteAfter.disable({emitEvent: false});
+      } else {
+        deleteAfter.enable({emitEvent: false});
+      }
+    });
+    return group;
   }
 
   protected addSource(): void {
